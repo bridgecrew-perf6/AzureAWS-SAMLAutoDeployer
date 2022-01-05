@@ -1,0 +1,98 @@
+Resources:
+  AzureSAMLProvider:
+    Type: 'AWS::IAM::SAMLProvider'
+    Properties: 
+      Name: AzureADSAML
+      SamlMetadataDocument: |
+          <?xml version="1.0" 000/09/xmldsig#"><SignedInfo>-sha256" /><XML DATA></IDPSSODescriptor></EntityDescriptor>
+  IamRole:
+    Type: 'AWS::IAM::Role'
+    DependsOn: AzureSAMLProvider
+    Properties:
+      RoleName: LambdaRoleSAML
+      Description: Role for execute LambdaRoleSAML
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/AdministratorAccess'
+  LambdaFunction4:
+    Type: 'AWS::Lambda::Function'
+    DependsOn: IamRole
+    Properties:
+      FunctionName: caller
+      Code:
+        ZipFile: |
+            import json
+            import boto3
+            import requests
+            import uuid
+
+            responseStatus = 'SUCCESS'
+            
+            def getResponse(event, context, responseStatus):
+                        responseBody = {'Status': responseStatus,
+                                        'PhysicalResourceId': context.log_stream_name,
+                                        'StackId': event['StackId'],
+                                        'RequestId': event['RequestId'],
+                                        'LogicalResourceId': event['LogicalResourceId'],
+                                        }
+                        responseBody = json.dumps(responseBody)
+                        print('RESPONSE BODY:n' + responseBody)
+            
+                        return responseBody
+            
+            def handler(event, context):
+              account_id = (boto3.client('sts').get_caller_identity()['Account'])
+              roles = ["Admin", "Developer"]
+              
+              policy = """{
+                  "Version": "2012-10-17",
+                  "Statement": [
+                  	{
+                  	"Effect": "Allow",
+                  	"Principal": {
+                  		"Federated": [
+                  		"arn:aws:iam::""" + account_id + """:saml-provider/AzureADSAML"
+                  		]
+                  	},
+                  	"Action": "sts:AssumeRoleWithSAML",
+                  	"Condition": {
+                  		"StringEquals": {
+                  		"SAML:aud": "https://signin.aws.amazon.com/saml"
+                  		}
+                  	}
+                  	}
+                  ]
+                  }"""
+              iam = boto3.resource('iam')
+              for role in roles:
+                  try:
+                      assume_role_policy = iam.AssumeRolePolicy(role)
+                      response = assume_role_policy.update(
+                      PolicyDocument=policy
+                      )
+                  except:
+                      pass
+              try:
+                  req = requests.put(event['ResponseURL'], data=getResponse(event, context, responseStatus))
+                  if req.status_code != 200:
+                      print(req.text)
+                      raise Exception('Received non 200 response while sending response to CFN.')
+              except requests.exceptions.RequestException as e:
+                  print(e)
+                  raise
+              return
+              print("COMPLETE")
+      Handler: index.handler
+      Role: !GetAtt 
+        - IamRole
+        - Arn
+      Runtime: python3.7
+      Timeout: 60
