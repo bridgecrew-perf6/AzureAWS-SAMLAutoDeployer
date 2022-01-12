@@ -9,4 +9,4 @@ What it does:
 3. Creates Lambda
 4. Execute Lambda (send response to CloudWatch)
 5. lambda mods assume-role policy document in each AWS role
-6. Lambda sends response to CloudWatch
+6. Lambda sends response to EventBridge (CloudWatch)
